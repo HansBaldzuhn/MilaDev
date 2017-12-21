@@ -211,8 +211,8 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
     
     def removeMultiInstance(self, plugName ):
         
-        cmd += representationsPlug[numElements-1].name();
-        OpenMaya.MGlobal.executeCommand(cmd);
+        cmd ="removeMultiInstance -b true %s" % plugName
+        OpenMaya.MGlobal.executeCommand(cmd)
         
         
     def disconnect(self, source, destination ):
@@ -283,12 +283,15 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 #             if self.objExists( self.multiAttr( index ) + "." + attr ):
 #                 set_connection_or_value( self.multiAttr( index ) + "." + attr, data[attr] )
         
-    def clean( node, indices=None ):
+    def clean( self, node, indices=None ):
         # Remove all empty entry in the node
     
         node = mila_node( node )
         if indices is None:
             indices = node.indices()
+            
+        print "Clean Node: %r" % node
+        print "indices: %s" % indices
     
         for i in indices:
             if not node.child( i ):
@@ -484,8 +487,8 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
                 pending_nodes.append( ( node, {} ) )
     
         print "pending_nodes:"
-        for node in pending_nodes:
-            print "\t %s" % epr(node)
+        for item in pending_nodes:
+            print "\t %s" % repr(item)
         
         # We are moving the source nodes to the specified index
         # Before we can do any work, we need to plan all moves to be as efficient as possible
@@ -493,46 +496,50 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
         before_nodes = []
         after_nodes = []
         print "Getting before and after nodes, for index: %s " % index
+        
+        # We will store a simple index, starting from zero. 
+        # If the beforeNodes indexes match our simple index, it mean it is in the right place and doens't need to be moved
         for child, child_id  in dest.children( index=True ):
-            print "\t child_id: %s" % child_id
+            print "\t child: %s" % repr(child)
             if child_id < index:
-                print "\tputting to before node: %s" % repr(child)
-#                 before_nodes.append( child )
-                before_nodes.append( self.get_node( dest, child_id, keep=False) )
+                print "\t\tputting to before node: %s" % repr(child)
+                before_nodes.append( child )
             else:
-                print "\tputting to after node: %s" % repr(child)
+                print "\t\tputting to after node: %s" % repr(child)
                 after_nodes.append( self.get_node( dest, child_id, keep=False) )
     
         if not keep and before_nodes and node.parent()[0]:
             # We are doing a move, if the node comes from the top of the layers we need to reorder all nodes before the dest index
-            lastIndex = self.reorder_node( dest, before_nodes, 0 )
-        else:
-            # We don't remove any node, the stack on top of the destination cannot be dirty, we don't reorder
-            lastIndex = index
+            index = self.reorder_node( dest, before_nodes, 0 )
+#         else:
+#             # We don't remove any node, the stack on top of the destination cannot be dirty, we don't reorder
+#             lastIndex = index
 
         print "before_nodes:"
-        for node in before_nodes:
-            print "\t %s" % epr(node)
+        for item in before_nodes:
+            print "\t %s" % repr(item)
         print "after_nodes:"
-        for node in after_nodes:
-            print "\t %s" % epr(node)
+        for item in after_nodes:
+            print "\t %s" % repr(item)
     
-        # Now put the sources in the gap created earlier
-        i = 0; #lastIndex
+        # Now put the sources right after the last node we reordered
+#         i = lastIndex
         if pending_nodes:
             for node, data in pending_nodes:
-                self.move_force( node, dest, index=i, nodeData=data )
-                i += 1
-#             lastIndex = i
+                self.move_force( node, dest, index=index, nodeData=data )
+                index += 1
     
-        # Now add all after nodes
-#         for node, data in after_nodes:
-#             self.move_force( node, dest, index=i, nodeData=data )
-#             i += 1
-#     
-#         # Now clean all modified foreign group
-#         for node in parent_for_cleaning:
-#             self.reorder_node( node, clean=True )
+        # Now add all after nodes after the last moved node
+        for node, data in after_nodes:
+            self.move_force( node, dest, index=index, nodeData=data )
+            index += 1
+            
+        # Our destination node might need a little clean up to remove trailing empty plugs
+        self.clean(node)
+      
+        # Now clean all modified foreign group, they might have holes in their plugs
+        for node in parent_for_cleaning:
+            self.reorder_node( node, clean=True )
             
     
     def hasSyntax(self, *args):
