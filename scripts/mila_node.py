@@ -33,6 +33,7 @@ MILA_NODES = set( MILA_COMPONENT_TYPES )
 MILA_NODES.update( MILA_GROUP_TYPES )
 MILA_NODES.add( "mila_material" )
 
+
 def getDependencyNode( node ):
 
     sel = OpenMaya.MSelectionList()
@@ -105,16 +106,14 @@ class MilaNode( object ):
         # Add a callback to delete all callback when the node is going to be deleted
         MilaNode.callBackData[self.name()].append( OpenMaya.MNodeMessage.addNodePreRemovalCallback( self.obj, self.deleteCallback ) )
 
-
     def attrChangeCallback( self, node, plug, *args ):
 
         # Refresh the parent mila node if any
         for parent in self.parentMila():
             mila_refresh_swatch( parent )
 
-
     def deleteCallback( self, *args ):
-        
+
         try:
             for callback in MilaNode.callBackData[self.obj]:
                 OpenMaya.MMessage.removeCallback( callback )
@@ -135,9 +134,9 @@ class MilaNode( object ):
             return "component"
         else:
             return None
-        
-    def select(self):
-        cmds.select(self.name())
+
+    def select( self ):
+        cmds.select( self.name() )
 
     def nodeType( self ):
         return self._node.typeName()
@@ -272,7 +271,6 @@ class MilaNode( object ):
             return tmp_layer
         return None
 
-
     def index( self, inputNode ):
         """ Return the index in the multiAttr array where the child is connected
         If the inputNode is on a child return None """
@@ -323,7 +321,6 @@ class MilaNode( object ):
 
         return self.attr( "save_shader" )
 
-
     def multiAttr( self, index=None, child=None ):
 
         if child:
@@ -337,14 +334,12 @@ class MilaNode( object ):
             index = ""
         return "%s.%s%s" % ( self.name(), self._multiAttrName(), index )
 
-
     def _multiAttrName( self ):
 
         if self.type() == "group":
             return MILA_MULTI_ATTR_NAME[self.nodeType()]
 
         return ""
-
 
     def attrData( self, index=0 ):
 
@@ -360,7 +355,6 @@ class MilaNode( object ):
 
         return dataDict
 
-
     def setAttrData( self, data, index=0 ):
 
         if self.type() != "group" or not data:
@@ -369,7 +363,6 @@ class MilaNode( object ):
         for attr in data:
             if cmds.objExists( self.multiAttr( index ) + "." + attr ):
                 set_connection_or_value( self.multiAttr( index ) + "." + attr, data[attr] )
-
 
     def niceName( self ):
 
@@ -380,7 +373,6 @@ class MilaNode( object ):
                 return niceName
 
         return self.name()
-
 
     def setNiceName( self, newName ):
 
@@ -396,6 +388,7 @@ class MilaNode( object ):
         else:
             return False
 
+
 def mila_refresh_swatch( node ):
     # Set a value to force refresh
     # This will fail if the show_framebuffer attribut has an input connection but it is very unlikely that someone will try to connect something to this
@@ -404,7 +397,7 @@ def mila_refresh_swatch( node ):
         return
 
     cmds.dgdirty( node.inAttr() )
-    
+
 
 def mila_flatten_node_selection( node_list_in ):
         """
@@ -422,7 +415,7 @@ def mila_flatten_node_selection( node_list_in ):
             new_set -= set( node.children( recurse=True ) )
 
         return new_set
-    
+
 
 def mila_node( input_, parent=None, index=None, create=False, name="" ):
 
@@ -444,15 +437,16 @@ def mila_node( input_, parent=None, index=None, create=False, name="" ):
         return MilaNode( node )
     else:
         return None
-    
+
+
 def mila_copy( node ):
 
     new_node = cmds.duplicate( node, upstreamNodes=True )[0]
     return mila_node( new_node )
-    
+
 
 def get_connection_or_value( attribute ):
-    
+
     connection = cmds.connectionInfo( attribute, sourceFromDestination=True )
     if connection:
         return connection
@@ -562,10 +556,10 @@ def mila_delete( node, parent=None, index=None, force=False, clean=True ):
 
 def mila_get_node( parent=None, index=None ):
     """ get the node from the destination with the previous Data it had on its parent"""
-    
+
     parent = mila_node( parent )
     node = parent.child( index )
-    
+
     attrData = parent.attrData( index )
 
     return node, attrData
@@ -574,12 +568,12 @@ def mila_get_node( parent=None, index=None ):
 def mila_remove_node( parent=None, index=None ):
     """ remove the node from the destination """
     parent = mila_node( parent )
-    
+
     node = parent.child( index )
     attrData = parent.attrData( index )
 
     # Disconnect the node
-    cmds.disconnectAttr( node.outAttr(), parent.inAttr(index) )
+    cmds.disconnectAttr( node.outAttr(), parent.inAttr( index ) )
 
     # Delete the item
     cmds.removeMultiInstance( parent.multiAttr( index ), b=True )
