@@ -1,6 +1,6 @@
 from maya import OpenMaya
 
-__all__ = ['MilaNode', 'mila_node', 'mila_copy', 'mila_init', 'mila_move', 'mila_delete', 'mila_enable_node', 'mila_set_solo', 'mila_remove_solo', 'MILA_GROUP_TYPES', 'MILA_COMPONENT_TYPES']
+__all__ = ['MilaNode', 'mila_node', 'mila_copy', 'mila_move', 'mila_init', 'mila_delete', 'mila_enable_node', 'mila_set_solo', 'mila_remove_solo', 'MILA_GROUP_TYPES', 'MILA_COMPONENT_TYPES']
 
 # Python modules
 import re

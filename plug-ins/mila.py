@@ -7,10 +7,23 @@ from mila_node import *
 import pprint
 from multiprocessing.dummy import active_children
 
+TAB = 0
+
+class Indent(object):
+    def __enter__(self):
+        global TAB
+        TAB += 1
+    def __exit__(self, *args):
+        global TAB
+        TAB -= 1
 
 def sysPrint( truc ):
-    sys.__stdout__.write( "%s\n" % truc )
+#     return
+    global TAB
+    sys.__stdout__.write( "%s%s\n" % ( "\t"*TAB, truc) )
 
+kInitFlag = "-i"
+kInitFlagLong = "-initialize"
 
 kMoveFlag = "-m"
 kMoveLongFlag = "-move"
@@ -36,7 +49,7 @@ kNodeFlagLong = "-node"
 kParentFlag = "-p"
 kParentFlagLong = "-parent"
 
-kIndexFlag = "-i"
+kIndexFlag = "-id"
 kIndexFlagLong = "-index"
 
 kKeepFlag = "-k"
@@ -44,6 +57,9 @@ kKeepFlagLong = "-keep"
 
 kForceFlag = "-f"
 kForceFlagLong = "-force"
+
+kCleanFlag = "-c"
+kCleanFlagLong = "-clean"
 
 kEnableNodeFlag = "-e"
 kEnableNodeFlagLong = "-enable"
@@ -54,14 +70,19 @@ kValueFlagLong = "-value"
 kPlugDict = "plugs"
 kValueDict = "values"
 
+kMilaSoloAttr = "ssa"
+kMilaSoloAttrLong = "solo_save_attr"
+
 
 class Action():
     kNothing = -1
-    kMove = 0  # use: -move -source "node_name" [multi] -destination "node_name" -index int
-    kDelete = 1  # use: -delete -node "node_name" (-parent "node_name") (-index int) -force bool
-    kSolo = 2  # use: -solo -node "node_name" -parent "node_name"
-    kRemoveSolo = 3  # use: -solo -parent "node_name"
-    kEnable = 4  # use: -enable -node "node_name" (-parent "node_name") (-index int) -value bool
+    kInit = 0       # use: -initialize "mila_node_name"
+    kMove = 1       # use: -move -source "node_name" [multi] -destination "node_name" -index int
+    kDelete = 2     # use: -delete -node "node_name" (-parent "node_name") (-index int) -force bool
+    kSolo = 3       # use: -solo -node "node_name" -parent "node_name"
+    kRemoveSolo = 4 # use: -solo -parent "node_name"
+    kEnable = 5     # use: -enable -node "node_name" (-parent "node_name") (-index int) -value bool
+    kClean = 6      # use: -clean -node "node_name"
 
 
 class milaMaterial( OpenMayaMPx.MPxCommand ):
@@ -94,20 +115,18 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
     def doIt( self, argList ):
 
-        sysPrint( "\n########" )
-
-        sysPrint( "arglist size: %s" % argList.length() )
-
-        for i in range( argList.length() ):
-            sysPrint( "argList: %s" % argList.asString( i ) )
-
         try:
             argParser = OpenMaya.MArgParser( self.syntax(), argList )
         except Exception, e:
             sysPrint( "Error parsing syntax" )
             raise AttributeError( "Wrong argument call: %s" % str( e ) )
 
-        if argParser.isFlagSet( kSoloFlag ):
+        if argParser.isFlagSet( kInitFlag):
+            # use: -initialize "mila_material_name"
+            self.action = Action.kInit
+            self.node = argParser.flagArgumentString(kInitFlag, 0)
+            
+        elif argParser.isFlagSet( kSoloFlag ):
             # use: -solo -node "node_name" -parent "node_name"
             self.action = Action.kSolo
 
@@ -165,7 +184,7 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
             self.action = Action.kMove
 
             if not ( argParser.isFlagSet( kSourceFlag ) and argParser.isFlagSet( kDestinationFlag ) ):
-                sysPrint( "not enougth argument" )
+                sysPrint( "not enought argument" )
                 return
 
             for i in range( argParser.numberOfFlagUses( kSourceFlag ) ):
@@ -180,6 +199,16 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
             self.keep = argParser.isFlagSet( kKeepFlag )
 
+        elif argParser.isFlagSet( kCleanFlag ):
+            sysPrint(" CLEAN")
+            
+            self.action = Action.kClean
+            if not argParser.isFlagSet(kNodeFlag):
+                sysPrint( "Missing argument -node" )
+                return
+            
+            self.node = argParser.flagArgumentString( kNodeFlag, 0 )
+            
         else:
             sysPrint( "Nohting to do" )
 
@@ -218,6 +247,14 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
         elif self.action == Action.kRemoveSolo:
             self.remove_solo( self.parent )
+            
+        elif self.action == Action.kInit:
+            returnValue = self.initialise_mila( self.node )
+            
+            self.setResult( returnValue )
+            
+        elif self.action == Action.kClean:
+            self.clean_node( self.node )
 
         self.dgModifier.doIt()
 
@@ -229,6 +266,25 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
     def isUndoable( self, *args ):
         return True
+    
+    def get_mila_solo_attr(self, obj):
+                
+        fn = OpenMaya.MFnDependencyNode(obj)
+        try:
+            return fn.findPlug(kMilaSoloAttr)
+        except RuntimeError, e:
+            if "kInvalidParameter" in str(e):
+                pass
+            else:
+                raise e
+        
+        mAttr = OpenMaya.MFnMessageAttribute()
+        
+        attrObj = mAttr.create( kMilaSoloAttrLong, kMilaSoloAttr )
+        
+        # Plug was not found, create it
+        self.dgModifier.addAttribute( obj, attrObj )
+        self.dgModifier.doIt()
 
     def _get_MPlug( self, *args ):
 
@@ -245,6 +301,46 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
             return outputs
         else:
             return outputs[0]
+        
+    def initialise_mila(self, mila):
+        
+        mila = mila_node(mila)
+        # Create custom attribute
+        self.get_mila_solo_attr(mila.obj)
+        
+        root_layer = ""
+        
+        mila_in_plug = self._get_MPlug( mila.inAttr() )
+        
+        if not mila_in_plug.isConnected():
+            # Create the top level hidden mila_layer
+            layer_obj = self.dgModifier.createNode( "mila_layer" )
+            self.dgModifier.renameNode( layer_obj, "%s_root_layer" % mila )
+            
+            self.dgModifier.doIt()
+
+            rulPlug = self._get_MPlug("defaultRenderUtilityList1.utilities")
+            
+            layer_fn = OpenMaya.MFnDependencyNode( layer_obj )
+            outPlug = layer_fn.findPlug( "message" )
+            
+            root_layer = layer_fn.name()
+            
+            self.dgModifier.connect( outPlug, rulPlug )
+            self.dgModifier.connect( outPlug, mila_in_plug )
+        else:
+            # Something is connected, use it as root
+            plugArray = OpenMaya.MPlugArray()
+            mila_fn = OpenMaya.MFnDependencyNode( mila.obj )
+            
+            inPlug = mila_fn.findPlug( "shader" )
+            
+            inPlug.connectedTo( plugArray, True, False )
+            
+            root_layer = OpenMaya.MFnDependencyNode( plugArray[0].node() ).name()
+            
+        return root_layer
+
 
     def get_input( self, node, parent=None, index=None ):
 
@@ -341,15 +437,18 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
             # Now delete the node
             self.dgModifier.deleteNode( node.obj )
 
+    def clean_node(self, node):
+        self.clean(node)
+        
     def disconnect( self, source, destination ):
 
-        print "disconnect: %s, %s" % ( source, destination )
+        sysPrint( "disconnect: %s, %s" % ( source, destination ))
         sourcePlug, destPlug = self._get_MPlug( source, destination )
 
         self.dgModifier.disconnect( sourcePlug, destPlug )
 
     def connect( self, source, destination ):
-        print "connect: %s, %s" % ( source, destination )
+        sysPrint( "connect: %s, %s" % ( source, destination ) )
 
         sourcePlug, destPlug = self._get_MPlug( source, destination )
         self.dgModifier.connect( sourcePlug, destPlug )
@@ -392,13 +491,11 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
             plugDict[attributeName] = plug
             toto = OpenMaya.MPlug()
 
-        print "SET DATA:"
-        pprint.pprint( plugDict )
-
+        sysPrint( "SET DATA:" )
         # First set all Plug value
         for attributeName, value in data[kValueDict]:
 
-            sysPrint( "setting: %s" % attributeName )
+            sysPrint( "\tsetting: %s" % attributeName )
 
             if not attributeName in plugDict:
                 continue
@@ -406,30 +503,37 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
             plug = plugDict[attributeName]
 
             if plug.isCompound():
+                sysPrint( "\t%s is a compound, dont set any value" % plug.name() )
                 # Never set compound plug
                 continue
 
-            sysPrint( "Set Value %s : %s" % ( plug.name(), value ) )
+            sysPrint( "\tSet Value %s : %s" % ( plug.name(), value ) )
             self.dgModifier.newPlugValueDouble( plug, value )
+
+            sysPrint( "\tdoIt" )
+            self.dgModifier.doIt()
+            sysPrint( "\tdoIt Done" )
 
         self.dgModifier.doIt()
 
         # Now Connect all plugs
+        sysPrint( "Connect DATA:")
         for attributeName, node, attribute in data[kPlugDict]:
 
-            sysPrint( "connecting: %s" % attributeName )
+            sysPrint( "\tconnecting: %s" % attributeName )
 
             if not attributeName in plugDict:
+                sysPrint("\tAttribute not found in dict, skipping")
                 continue
 
-            sysPrint( "getting plug from dict" )
+            sysPrint( "\tgetting plug from dict" )
             plug = plugDict[attributeName]
-            sysPrint( "plug: %s" % plug.name() )
+            sysPrint( "\tplug: %s" % plug.name() )
 
             source_plug = OpenMaya.MPlug( node, attribute )
-            sysPrint( "sourceplug: %s" % source_plug.name() )
+            sysPrint( "\tsourceplug: %s" % source_plug.name() )
 
-            sysPrint( "Connect %s : %s" % ( source_plug.name(), plug.name() ) )
+            sysPrint( "\tConnect %s : %s" % ( source_plug.name(), plug.name() ) )
             self.dgModifier.connect( source_plug, plug )
 
         self.dgModifier.doIt()
@@ -439,7 +543,6 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
         node = mila_node( node )
         if indices is None:
-#             print "node %r, attr %s" % (node, node.multiAttr())
             indices = node.indices()
 
         for i in indices:
@@ -459,7 +562,7 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
                 raise
 
     def get_node( self, parent=None, index=None, keep=False ):
-        print "get_node: %s at %s" % ( parent, index )
+        sysPrint( "get_node: %s at %s" % ( parent, index ) )
 
         def getValue( inputPlug ):
             return inputPlug.asDouble()
@@ -526,9 +629,6 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
         if node and not keep:
             self.disconnect( node.outAttr(), parent.inAttr( index ) )
 
-        print "DATA:"
-        pprint.pprint( data )
-
         return node, data
 
     def remove_node( self, parent=None, index=None ):
@@ -554,7 +654,7 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
         # Get a list of all indices in the node to clean anything left empty
         origIndices = parent.indices()
-        print "Original indices: %s" % origIndices
+        sysPrint( "Original indices: %s" % origIndices )
 
         if nodes is None:
             nodes = parent.children()
@@ -565,15 +665,15 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
         i = startingIndex
         for node in nodes:
-            print "\t%r" % node
+            sysPrint( "\t%r" % node )
             p, index = node.parent()
-            print "\t\t i:%s, index:%s" % ( i, index )
+            sysPrint( "\t\t i:%s, index:%s" % ( i, index ) )
             if index != i:
-                print "\t\tindexes don't match, disconnect the node and plug it to the correct place"
+                sysPrint( "\t\tindexes don't match, disconnect the node and plug it to the correct place" )
                 node, data = self.get_node( p, index, keep=False )
                 self.move_force( node, parent, index=i, nodeData=data, keep=keep )
             else:
-                print "\t\tindexes match, don't move the node"
+                sysPrint( "\t\tindexes match, don't move the node" )
 
 #             node_id_data.append( ( node, index, data ) )
             i += 1
@@ -595,7 +695,7 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
         source = mila_node( source )
         dest = mila_node( dest )
 
-        print "Move_Force: %r %r at %s" % ( source, dest, index )
+        sysPrint( "Move_Force: %r %r at %s" % ( source, dest, index ) )
 
         parent, parent_id = source.parent()
 
@@ -616,131 +716,80 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
         # Move all items to the specified index inside the destination
         # Everything will be reorganized so that each group node will have its first item at index 0 and everything stacked consecutively without hole
 
-        print "####\nmove: %s, %s, %s, keep=%s" % ( sources, destination, index, keep )
-#
-#         print "INITIAL STATE"
-#         print "destination children:"
-#         print "%r" % destination
-#         for node in destination.children():
-#             print "\t%r" % node
-#         print "Sources:"
-#         for node in sources:
-#             print "\t%r" % node
-#             print "#####"
-
+        sysPrint( "####\nmove: %s, %s, %s, keep=%s" % ( sources, destination, index, keep ) )
+        
         pending_nodes = []
         parent_for_cleaning = set()
 
-#         # If we specify keep=True, the source node won't be disconnected from their current position (e.i. instancing the node)
-#         if keep:
-#             print "keep"
-#             # We don't remove the node from their original position
-#             for node in sources:
-#                 node_parent, parent_id = node.parent()
-#                 if node_parent:
-#                     pending_nodes.append( self.get_node( node_parent, parent_id ) )
-#                 else:
-#                     pending_nodes.append( ( node, {} ) )
-#         else:
-#             # First, remove all sources so we make some room for reodering
-#             # Keep track of their foreign parent to clean them at the end
-#             for node in sources:
-#                 node_parent, parent_id = node.parent()
-#                 if node_parent and parent_id is not None:
-#                     if node_parent != destination:
-#                         # We are taking a node from another group node, it will leave an empty plug in it, keep track of it for cleanning
-#                         parent_for_cleaning.add( node_parent )
-#                     pending_nodes.append( self.get_node( node_parent, parent_id, keep=False ) )
-#                 else:
-#                     pending_nodes.append( ( node, {} ) )
+        sysPrint("Get all sources")
+        with Indent():
+            # First get all sources so we make some room for reodering and cleaning
+            # Keep track of their foreign parent to clean them at the end if nescesary
+            for node in sources:
+                node_parent, parent_id = node.parent()
+                if node_parent and parent_id is not None:
+                    if not keep and node_parent != destination:
+                        # We are taking a node from another group node, it will leave an empty plug in it, keep track of it for cleanning
+                        parent_for_cleaning.add( node_parent )
+                    pending_nodes.append( self.get_node( node_parent, parent_id, keep=keep ) )
+                else:
+                    # the node has no parent, so no data
+                    pending_nodes.append( ( node, {} ) )
+    
+            self.dgModifier.doIt()
 
-        # First get all sources so we make some room for reodering and cleaning
-        # Keep track of their foreign parent to clean them at the end if nescesary
-        for node in sources:
-#             print "node: %s" % repr( node )
-            node_parent, parent_id = node.parent()
-#             print "node Parent: %r" % node_parent
-#             print "parent_id: %s" % parent_id
-            if node_parent and parent_id is not None:
-#                 print "\t doing stuff with parent to get data"
-                if not keep and node_parent != destination:
-                    # We are taking a node from another group node, it will leave an empty plug in it, keep track of it for cleanning
-                    parent_for_cleaning.add( node_parent )
-                pending_nodes.append( self.get_node( node_parent, parent_id, keep=keep ) )
-            else:
-#                 print "\t doing nothing, only passing node to list: %r" % node
-                # the node has no parent, so no data
-                pending_nodes.append( ( node, {} ) )
-
-#         print "pending_nodes:"
-#         for item in pending_nodes:
-#             print "\t %s" % repr( item )
-
-        self.dgModifier.doIt()
-
-#         print "#####\tAFTER DOIT for get pending nodes"
-#         print "destination children:"
-#         print "%r" % destination
-#         for node in destination.children():
-#             print "\t%r" % node
-#         print "#####"
         # We are moving the source nodes to the specified index
         # Before we can do any work, we need to plan all moves to be as efficient as possible
 
         before_nodes = []
         after_nodes = []
-#         print "Getting before and after nodes, for index: %s " % index
 
-        # We will store a simple index, starting from zero.
-        # If the beforeNodes indexes match our simple index, it mean it is in the right place and doens't need to be moved
-        for child, child_id  in destination.children( index=True ):
-#             print "\t child: %s" % repr( child )
-            if child_id < index:
-#                 print "\t\tputting to before node: %s" % repr( child )
-                before_nodes.append( child )
-            else:
-#                 print "\t\tputting to after node: %s" % repr( child )
-                after_nodes.append( self.get_node( destination, child_id, keep=False ) )
-
-#         print "before_nodes:"
-#         for item in before_nodes:
-#             print "\t %s" % repr( item )
+        
+        sysPrint("get all other nodes before moving")
+        with Indent():
+            # We will store a simple index, starting from zero.
+            # If the beforeNodes indexes match our simple index, it mean it is in the right place and doesn't need to be moved
+            for child, child_id  in destination.children( index=True ):
+                if child_id < index:
+                    sysPrint("add %r" % child)
+                    before_nodes.append( child )
+                else:
+                    after_nodes.append( self.get_node( destination, child_id, keep=False ) )
 
         if not keep and before_nodes and node.parent()[0]:
-            # We are doing a move, if the node comes from the top of the layers we need to reorder all nodes before the destination index
-            index = self.reorder_node( destination, before_nodes, 0 )
-#         else:
-#             # We don't remove any node, the stack on top of the destination cannot be dirty, we don't reorder
-#             lastIndex = index
-#         print "after_nodes:"
-#         for item in after_nodes:
-#             print "\t %s" % repr( item[0] )
+            sysPrint( "We need to reorder the before nodes" )
+            with Indent():
+                # We are doing a move, if the node comes from the top of the layers we need to reorder all nodes before the destination index
+                index = self.reorder_node( destination, before_nodes, 0 )
 
-        # Now put the sources right after the last node we reordered
-#         i = lastIndex
-        if pending_nodes:
-            for node, data in pending_nodes:
+        sysPrint("not put the pending nodes")
+        with Indent():
+            # Now put the sources right after the last node we reordered
+            if pending_nodes:
+                for node, data in pending_nodes:
+                    self.move_force( node, destination, index=index, nodeData=data )
+                    index += 1
+
+        sysPrint("Now put all the after nodes")
+        with Indent():
+            # Now add all after nodes after the last moved node
+            for node, data in after_nodes:
                 self.move_force( node, destination, index=index, nodeData=data )
                 index += 1
 
-        # Now add all after nodes after the last moved node
-        for node, data in after_nodes:
-            self.move_force( node, destination, index=index, nodeData=data )
-            index += 1
-
-#         print "doIt before cleaning so all nodes are already disconnected"
+        # doIt before cleaning so all nodes are already disconnected"
         self.dgModifier.doIt()
 
-        # Our destination node might need a little clean up to remove trailing empty plugs
-#         print "Clean destination"
-        self.clean( destination )
+        sysPrint(" Now clean destination")
+        with Indent():
+            # Our destination node might need a little clean up to remove trailing empty plugs
+            self.clean( destination )
 
-        # Now clean all modified foreign group, they might have holes in their plugs
-#         print "Clean previous parent of moved nodes":
-        for node in parent_for_cleaning:
-#             print "#####\n\tCleaning: %r" % node
-            self.reorder_node( node, clean=True )
-#             print "End Cleaning \n######"
+        sysPrint("Now clean all foreign parent")
+        with Indent():
+            # Now clean all modified foreign group, they might have holes in their plugs
+            for node in parent_for_cleaning:
+                self.reorder_node( node, clean=True )
 
     def hasSyntax( self, *args ):
         return True
@@ -750,6 +799,12 @@ def commandSyntax():
 
     syntax = OpenMaya.MSyntax()
 
+    # -initialize mila
+    try:
+        syntax.addFlag( kInitFlag, kInitFlagLong, OpenMaya.MSyntax.kString )
+    except Exception, e:
+        sysPrint( e.str() )
+        
     # -move
     try:
         syntax.addFlag( kMoveFlag, kMoveLongFlag )
@@ -828,6 +883,12 @@ def commandSyntax():
         syntax.addFlag( kForceFlag, kForceFlagLong )
     except Exception, e:
         sysPrint( str( e ) )
+        
+    # -clean
+    try:
+        syntax.addFlag( kCleanFlag, kCleanFlagLong )
+    except Exception, e:
+        sysPrint( str( e ) )
 
     return syntax
 
@@ -890,9 +951,16 @@ class milaDragAndDrop( OpenMayaMPx.MPxDragAndDropBehavior ):
         sysPrint( "bump; %s" % bump.name() )
         bumpValue = bump.findPlug( "bumpValue", True )
         outNormal = bump.findPlug( "outNormal", True )
+        outMessage = bump.findPlug( "message", True )
+        
+        sel = OpenMaya.MSelectionList()
+        sel.add("defaultRenderUtilityList1.utilities")
+        rulPlug = OpenMaya.MPlug() 
+        sel.getPlug(0, rulPlug)
 
         dg.connect( outAlpha, bumpValue )
         dg.connect( outNormal, destinationPlug )
+        dg.connect( outMessage, rulPlug )
 
         sysPrint( "destinationPlug: %s" % destinationPlug.name() )
 

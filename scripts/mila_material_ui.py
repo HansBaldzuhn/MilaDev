@@ -57,7 +57,7 @@ class DisabledUndo( object ):
 
 class UndoChunk( object ):
 
-    def __init__( self, name="" ):
+    def __init__( self, name="milaUndoChunk" ):
         self.name = name
 
     def __enter__( self ):
@@ -65,21 +65,21 @@ class UndoChunk( object ):
 
     def __exit__( self, *args ):
         cmds.undoInfo( closeChunk=True )
-
-class IprWait( object ):
-
-    def __init__( self, node ):
-
-        self.node = node
-
-    def __enter__( self ):
-#         cmds.Mayatomr(pauseTuning=True)
-        pass
-
-    def __exit__( self, *args ):
-#         cmds.Mayatomr(pauseTuning=False)
-        pass
-        # Now do a fake edit to force the ipr to refresh
+# 
+# class IprWait( object ):
+# 
+#     def __init__( self, node ):
+# 
+#         self.node = node
+# 
+#     def __enter__( self ):
+# #         cmds.Mayatomr(pauseTuning=True)
+#         pass
+# 
+#     def __exit__( self, *args ):
+# #         cmds.Mayatomr(pauseTuning=False)
+#         pass
+#         # Now do a fake edit to force the ipr to refresh
 
 
 def ICON( imageFile ):
@@ -260,7 +260,6 @@ class MilaTreeLayout( QtGui.QWidget ):
 
     @QtCore.Slot()
     def clearComponent( self ):
-
         if self.componentUI:
             self.componentUI.hide()
 
@@ -268,7 +267,7 @@ class MilaTreeLayout( QtGui.QWidget ):
     @QtCore.Slot( MilaNode )
     def setComponent( self, node ):
 
-        with DisabledUndo():  # "setComponent( %s )" % node.name() ):
+        with UndoChunk( "setComponent( %s )" % node.name() ):
             if not self.componentUI:
                 cmds.setParent( self.milaComponentLayout() )
                 self.componentUI = AE_mila_base_ui()
@@ -322,7 +321,7 @@ class TreeWidget( QtGui.QScrollArea ):
 
     def __repr__( self ):
 
-        return 'TreeWidget("%s")' % self._node.name()
+        return 'TreeWidget("%s")' % self.node().name()
 
     def __init__( self, input_, parent ):
         super( TreeWidget, self ).__init__( parent )
@@ -334,6 +333,7 @@ class TreeWidget( QtGui.QScrollArea ):
         self.setWidgetResizable( True )
 
         self._node = None
+        self._mila_node = None
         self._last_selected = None
         self.save_select = {}
         self._iconStateQuery = False
@@ -410,38 +410,44 @@ class TreeWidget( QtGui.QScrollArea ):
         """ Clear and re feed the ui """
 
 #        self.saveSelection()
+#         self._node = mila_node( cmds.milaMaterial( initialize=self._mila_node.name() ))
 
-        with DisabledUndo():
+#         with DisabledUndo():
 
-            self.clear()
-            self.feedUIRecurse()
+        self.clear()
+        self.feedUIRecurse()
 
-            # Restore soloState
-            solo_item = self.mila().soloItem()
-            if solo_item:
-                for item in self.children():
-                    if item._node == solo_item:
-                        item.setSolo()
+        # Restore soloState
+        solo_item = self.mila().soloItem()
+        if solo_item:
+            for item in self.children():
+                if item.node() == solo_item:
+                    item.setSolo()
 
-            self.restoreSelection()
+        self.restoreSelection()
 
     def setMila( self, mila ):
         """ Set the ui to work on the specified node, it will also init the mila_material if nescessary.
         This function also peform a reload of the ui. """
         self._mila_node = mila_node( mila )
-        self._node = mila_node( mila_init( mila ) )
-
         self.reload()
+
+#     def initializeMila( self ):
+#         """ Set the ui to work on the specified node, it will also init the mila_material if nescessary.
+#         This function also peform a reload of the ui. """
 
     def mila( self ):
         return self._mila_node
-
+    
     def node( self ):
         """ 
         This function returns the hidden mila_layer node, it is nescessary to be able to treat the root (self) as a TreeItemWidget
         If there is something in the "save_layer" attr, the mila is currently in solo state.
         We need to consider this one instead of the layer in the "shader" attribute
         """
+        # Initialise mila material, e.i. create a mila_layer
+        self._node = cmds.milaMaterial( initialize=self.mila().name() )
+    
         if cmds.connectionInfo( self.mila().shaderSaveAttr(), isExactDestination=True ):
             return self.mila().source( self.mila().shaderSaveAttr() )
         else:
@@ -454,10 +460,10 @@ class TreeWidget( QtGui.QScrollArea ):
         return self
 
     def type( self ):
-        return self._node.type()
+        return self.node().type()
 
     def nodeType( self ):
-        return self._node.nodeType()
+        return self.node().nodeType()
 
     def parent( self ):
         return None
@@ -469,7 +475,8 @@ class TreeWidget( QtGui.QScrollArea ):
     @QtCore.Slot( str )
     def addItem_clicked( self, type ):
         destination = self._last_selected
-        self.addItems( type, destination )
+        with UndoChunk("addItem( %s, %s)" % (type, destination)):
+            self.addItems( type, destination )
 
 
     def addItems( self, items, destination=None, position=Position.kDefault, uiOnly=False, behaviour=MoveBehaviour.kLink ):
@@ -491,25 +498,25 @@ class TreeWidget( QtGui.QScrollArea ):
 
         items = [ mila_node( item, create=True ) for item in items]
 
-        remove = False
+        keep = True
 
         # First try to delete all existing TreeItemWidget with the same nodes
         # Only if we are moving the nodes
         if not uiOnly and behaviour == MoveBehaviour.kMove:
-            remove = True
+            keep = False
             for treeItem in self.children():
-                if treeItem._node in items:
+                if treeItem.node() in items:
                     treeItem.setParent( None )
                     treeItem.deleteLater()
 
-        if behaviour == MoveBehaviour.kCopy:
+        elif behaviour == MoveBehaviour.kCopy:
             copy_items = []
             for item in items:
                 copy_items.append( mila_copy( item ) )
             items = copy_items
 
         elif behaviour == MoveBehaviour.kLink:
-            remove = False
+            keep = True
 
 
         new_items = [TreeItemWidget( item, self ) for item in items]
@@ -533,12 +540,10 @@ class TreeWidget( QtGui.QScrollArea ):
             parent, index = self.getIndex( destination, position )
 
             # Move the ui
-            self.moveItem( new_items, parent, index=index, remove=remove )
+            self.moveItem( new_items, parent, index=index )
 
             # Move the nodes
-            with UndoChunk( "mila_move( %s, %s, index=%s, remove=%s )" % ( repr(item), parent.node(), index, remove ) ):
-                mila_move( items, parent.node(), index=index, remove=remove )
-
+            cmds.milaMaterial( move=True,source=items, destination=parent.node().name(), index=index, keep=keep )
 
             # We need to refresh the state of the control since it may have changed after the move
             for item in new_items:
@@ -552,13 +557,13 @@ class TreeWidget( QtGui.QScrollArea ):
         node = mila_node( node )
         if node:
             for child in self.children():
-                if child._node == node:
+                if child.node() == node:
                     return child
 
     def resetSolo( self, _input, state=False ):
 
         for item in self.children():
-            if not state or item._node != _input._node:
+            if not state or item.node() != _input.node():
                 item.setSolo( False )
             elif state:
                 item.setSolo( True )
@@ -573,14 +578,15 @@ class TreeWidget( QtGui.QScrollArea ):
         if self._last_selected == _input:
             self._last_selected = None
 
-        node = _input.node()
+        node = _input.getNode()
 
         _input.setParent( None )
         _input.deleteLater()
 
         if delete_node:
-            with UndoChunk( "mila_delete(%s)" % node.name() ):
-                mila_delete( node )
+            cmds.milaMaterial( delete=True, node=node.name() )
+#             with UndoChunk( "mila_delete(%s)" % node.name() ):
+#                 mila_delete( node )
 
         self.updateParentComponent()
 
@@ -588,11 +594,10 @@ class TreeWidget( QtGui.QScrollArea ):
     def updateParentComponent( self ):
 
         if self._last_selected:
-            self.updateComponentUI.emit( self._last_selected.node() )
+            self.updateComponentUI.emit( self._last_selected.getNode() )
 
         else:
             self.clearComponentUI.emit()
-
 
     def feedUIRecurse( self, uiItems=None ):
 
@@ -602,18 +607,19 @@ class TreeWidget( QtGui.QScrollArea ):
         if not isinstance( uiItems, ( list, tuple ) ):
             uiItems = [uiItems]
 
-        for uiItem in uiItems:
-
-            uiItem.clear()
-
-            for child in uiItem._node.children():
-                new_items = self.addItems( child, destination=uiItem, uiOnly=True )
-                for item in new_items:
-                    self.feedUIRecurse( item )
+        with UndoChunk("feedUIRecurse( %s )" % uiItems):
+            for uiItem in uiItems:
+    
+                uiItem.clear()
+    
+                for child in uiItem.node().children():
+                    new_items = self.addItems( child, destination=uiItem, uiOnly=True )
+                    for item in new_items:
+                        self.feedUIRecurse( item )
 
     def getIndex( self, destination, position ):
 
-        # We initialise the drop index to zero (default behaviour, putting the node in top of the layer)
+        # We initialize the drop index to zero (default behaviour, putting the node in top of the layer)
         index = 0
 
         parent = destination
@@ -641,7 +647,7 @@ class TreeWidget( QtGui.QScrollArea ):
         return parent, index
 
 
-    def moveItem( self, sources, parent, index=0, remove=True ):
+    def moveItem( self, sources, parent, index=0 ):
 
         # Build all move command while moving the widgets and execute it later
         # So the ui update won't be delayed by the maya graph manipulation
@@ -692,7 +698,7 @@ class TreeWidget( QtGui.QScrollArea ):
                 pass
             return
 
-        self.save_select[self.mila().name()] = self.lastSelected().node()
+        self.save_select[self.mila().name()] = self.lastSelected().getNode()
 
     def restoreSelection( self ):
 
@@ -868,7 +874,7 @@ class TreeWidget( QtGui.QScrollArea ):
             # Select
             action = QtGui.QAction( "Select Node", self ) 
             # item is a TreeItemWidget
-            action.triggered.connect( item._node.select )
+            action.triggered.connect( item.node().select )
             popupMenu.addAction( action )
             
             popupMenu.popup( self.mapToGlobal( event.pos() ) )
@@ -1031,7 +1037,7 @@ class TreeWidget( QtGui.QScrollArea ):
         position, drop_item = self._getDropPosition( event.pos() )
         
         if drop_item is not self:
-            drop_node = drop_item.node()
+            drop_node = drop_item.getNode()
 
             if not drop_item:
                 event.ignore()
@@ -1080,8 +1086,8 @@ class TreeWidget( QtGui.QScrollArea ):
             behaviour = MoveBehaviour.kMove
         event.accept()
         
-        self.addItems( drag_nodes, drop_item, position, behaviour=behaviour )
-
+        with UndoChunk("addItems %s, %s, %s, %s" % (drag_nodes, drop_item, position, STR_BEHAV(behaviour))):
+            self.addItems( drag_nodes, drop_item, position, behaviour=behaviour )
 
 
     def selfGeometry( self ):
@@ -1155,7 +1161,7 @@ class TreeWidget( QtGui.QScrollArea ):
             dragData = []
             for item in inputItems:
 
-                node = item.node()
+                node = item.getNode()
                 parent, index = node.parent()
 
                 dragData.append( "%s,%s,%s" % ( node, parent, index ) )
@@ -1311,7 +1317,7 @@ class TreeItemWidget( QtGui.QWidget ):
         p = self.parent()
         index = p.child_layout.indexOf( self )
 
-        return "%s(%s, %s, %s)" % ( type( self ).__name__, self._node.name(), p._node.name(), index )
+        return "%s(%s, %s, %s)" % ( type( self ).__name__, self.node().name(), p.node().name(), index )
 
     def __nonzero__( self ):
         return isValid( self ) and bool( QtGui.QWidget.parent( self ) )
@@ -1347,7 +1353,7 @@ class TreeItemWidget( QtGui.QWidget ):
         # TITLE LAYOUT
         self.icon_widget = ColoredIcon( icon_path, ( 28, 28 ), self )
 
-        self.createColorChangeCallBack()
+        self.createNodeCallBack()
 
         # LABEL (editable)
         self.label_widget = TreeItemWidgetLabel( self._node, self.title_widget )
@@ -1388,18 +1394,21 @@ class TreeItemWidget( QtGui.QWidget ):
 
 
         self.updateIconColor()
+        
+    def node(self):
+        return self._node
 
     def matches( self, other ):
         try:
-            return self._node == other._node
+            return self.node() == other.node()
         except AttributeError:
             return False
 
-    def createColorChangeCallBack( self ):
+    def createNodeCallBack( self ):
         # Add a callback to update the icon color
-        self.callBack.append( OpenMaya.MNodeMessage.addAttributeChangedCallback( self._node.obj, self.colorChangeCallback ) )
+        self.callBack.append( OpenMaya.MNodeMessage.addAttributeChangedCallback( self.node().obj, self.colorChangeCallback ) )
         # Add a callback to delete all callback when the node is going to be deleted
-        self.callBack.append( OpenMaya.MNodeMessage.addNodePreRemovalCallback( self._node.obj, self.nodeDeletedCallback ) )
+        self.callBack.append( OpenMaya.MNodeMessage.addNodePreRemovalCallback( self.node().obj, self.nodeDeletedCallback ) )
 
     def deleteLater( self, *args, **kargs ):
         self.deleteAllCallback()
@@ -1407,7 +1416,7 @@ class TreeItemWidget( QtGui.QWidget ):
 
     def updateIconColor( self ):
         try:
-            color = cmds.getAttr( self._node.attr( "tint" ) )[0]
+            color = cmds.getAttr( self.node().attr( "tint" ) )[0]
         except ValueError:
             return
 
@@ -1422,6 +1431,7 @@ class TreeItemWidget( QtGui.QWidget ):
             self.deleteAllCallback()
             
     def nodeDeletedCallback(self, *args):
+        print "DeleteCallback for %r" % self
         self.deleteAllCallback()
         self.delete(delete_node=False)
 
@@ -1433,17 +1443,17 @@ class TreeItemWidget( QtGui.QWidget ):
                 pass
         self.callBack = []
 
-    def node( self ):
+    def getNode( self ):
 
         p = self.parent()
         
-        new_node = copy.copy( self._node )
+        new_node = copy.copy( self.node() )
         
         if p:
             uiId = p.child_layout.indexOf( self )
-            nodeId = p._node.connectedIndices()[uiId]
+            nodeId = p.node().connectedIndices()[uiId]
 
-            new_node._parent = p._node
+            new_node._parent = p.node()
             new_node._parent_id = nodeId
         else:
             new_node._parent = None
@@ -1462,10 +1472,10 @@ class TreeItemWidget( QtGui.QWidget ):
         return parent
 
     def type( self ):
-        return self._node.type()
+        return self.node().type()
 
     def nodeType( self ):
-        return self._node.nodeType()
+        return self.node().nodeType()
 
     def parent( self ):
         parent = QtGui.QWidget.parent( self )
@@ -1506,7 +1516,7 @@ class TreeItemWidget( QtGui.QWidget ):
         self.enable_widget.setState( value )
 
         if set:
-            with UndoChunk( "mila_enable_node( %s, value=%s )" % ( self._node.name(), value ) ):
+            with UndoChunk( "mila_enable_node( %s, value=%s )" % ( self.node().name(), value ) ):
                 mila_enable_node( self.node(), value=value )
 
     def setSolo( self, value=True, set=False ):
@@ -1516,8 +1526,8 @@ class TreeItemWidget( QtGui.QWidget ):
 
             if set:
                 self.root().resetSolo( self, True )
-                with UndoChunk( "mila_set_solo(%s,%s)" % ( self._node.name(), self.root().mila().name() ) ):
-                    mila_set_solo( self._node, self.root().mila() )
+                with UndoChunk( "mila_set_solo(%s,%s)" % ( self.node().name(), self.root().mila().name() ) ):
+                    mila_set_solo( self.node(), self.root().mila() )
         else:
             self.setSoloState( False )
             if set:
@@ -1532,7 +1542,7 @@ class TreeItemWidget( QtGui.QWidget ):
 
     @QtCore.Slot()
     def enable_widget_clicked( self ):
-        state = self._node.enabled()
+        state = self.node().enabled()
         self.setState( value=not state, set=True )
 
     @QtCore.Slot()
@@ -1578,7 +1588,7 @@ class TreeItemWidget( QtGui.QWidget ):
         return QtCore.QRect( width, 0, self.geometry().right(), geo.height() )
 
     def showChildLayout( self, value=True ):
-        if self._node.type() == "component":
+        if self.node().type() == "component":
             value = False
         self.child_widget.setVisible( value )
 
@@ -1677,7 +1687,7 @@ class TreeItemWidgetLabel( QtGui.QWidget ):
     def __init__( self, node, parent ):
         super( TreeItemWidgetLabel, self ).__init__( parent )
 
-        self.node = node
+        self._node = node
 
         self.mainLayout = QtGui.QHBoxLayout( self )
         self.mainLayout.setContentsMargins( 0, 0, 0, 0 )
@@ -1690,9 +1700,9 @@ class TreeItemWidgetLabel( QtGui.QWidget ):
         self.displayLayout.setContentsMargins( 0, 0, 0, 0 )
         self.displayLayout.setSpacing( 0 )
 
-        self.niceName = QtGui.QLabel( self.node.niceName() , self.displayWidget )
+        self.niceName = QtGui.QLabel( self._node.niceName() , self.displayWidget )
 
-        self.realName = QtGui.QLabel( self.node.name(), self.displayWidget )
+        self.realName = QtGui.QLabel( self._node.name(), self.displayWidget )
         widgetFont = QtGui.QFont()
         widgetFont.setPointSize( 6 )
         self.realName.setFont( widgetFont )
@@ -1716,6 +1726,9 @@ class TreeItemWidgetLabel( QtGui.QWidget ):
         self.mainLayout.addWidget( self.editWidget )
 
         self.update()
+        
+    def node(self):
+        return self._node
 
     def mouseDoubleClickEvent( self, event ):
 
@@ -1731,7 +1744,7 @@ class TreeItemWidgetLabel( QtGui.QWidget ):
 
     def update( self ):
 
-        if not self.node.niceName() or self.node.niceName() == self.node.name():
+        if not self.node().niceName() or self.node().niceName() == self.node().name():
             self.realName.hide()
         else:
             self.realName.show()
@@ -1745,7 +1758,7 @@ class TreeItemWidgetLabel( QtGui.QWidget ):
         self.displayWidget.show()
         self.editWidget.hide()
 
-        self.node.setNiceName( newName )
+        self.node().setNiceName( newName )
 
         self.update()
 
@@ -1985,7 +1998,8 @@ def mila_tree( mila=None, parent=None ):
 
     cmds.setParent( parent )
 
-    # If the parent is the Attribute Editor or the property editor, we need to keep track of our QObject for later updates (e.g. when we select another node)
+    # If the parent is the Attribute Editor or the property editor, we need to keep track of our QObject for later updates
+    # e.g. when we select another node
     if "MainAttributeEditorLayout" in parent or "propertyPanelForm" in parent:
         # We will save the MilaTreeLayout
         global AE_MILA_UI
@@ -2003,4 +2017,11 @@ def mila_tree_update_AE( mila, parent=None ):
         return
 
     if mila != AE_MILA_UI[parent].treeUI.mila().name():
+        # It's a different mila, change the ui and reload it
+#         print "%s: It's a different mila, change the ui and reload it" % mila
         AE_MILA_UI[parent].treeUI.setMila( mila )
+#     elif not cmds.connectionInfo( "%s.shader" % mila, isExactDestination=True ):
+#         # it's the same mila but it has not incoming connection. something was broken by te user
+#         print "%s: it's the same mila but it has not incoming connection" % mila
+#         AE_MILA_UI[parent].treeUI.initializeMila()
+        
