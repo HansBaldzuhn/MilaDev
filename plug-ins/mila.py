@@ -10,8 +10,12 @@ from multiprocessing.dummy import active_children
 TAB = 0
 
 class Indent(object):
+    def __init__(self, printString=None):
+        self.text = printString
     def __enter__(self):
         global TAB
+        if self.text:
+            sysPrint( self.text )
         TAB += 1
     def __exit__(self, *args):
         global TAB
@@ -477,19 +481,22 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
         multi_plug = self.get_multi_plug( node.obj )
 
         parentPlug = multi_plug.elementByLogicalIndex( index )
+        sysPrint("Looking for plug for index: %d" % index)
         plugDict = {}
-        for i in range( parentPlug.numChildren() ):
-            plug = parentPlug.child( i )
-
-            if plug.isCompound():
-                for i in range( plug.numChildren() ):
-                    childPlug = plug.child( i )
-                    attributeName = OpenMaya.MFnAttribute( childPlug.attribute() ).name()
-                    plugDict[attributeName] = childPlug
-
-            attributeName = OpenMaya.MFnAttribute( plug.attribute() ).name()
-            plugDict[attributeName] = plug
-            toto = OpenMaya.MPlug()
+        with Indent("plug: %s" % parentPlug.name()):
+            for i in range( parentPlug.numChildren() ):
+                plug = parentPlug.child( i )
+    
+                if plug.isCompound():
+                    for i in range( plug.numChildren() ):
+                        childPlug = plug.child( i )
+                        attributeName = OpenMaya.MFnAttribute( childPlug.attribute() ).name()
+                        plugDict[attributeName] = childPlug
+    
+                attributeName = OpenMaya.MFnAttribute( plug.attribute() ).name()
+                sysPrint("attribute: %s, for plug %s" % (attributeName, plug.name()))
+                plugDict[attributeName] = plug
+                toto = OpenMaya.MPlug()
 
         sysPrint( "SET DATA:" )
         # First set all Plug value
@@ -566,16 +573,6 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
         def getValue( inputPlug ):
             return inputPlug.asDouble()
-    #         try:
-    #         except Exception, e:
-    #             if "kInvalidParameter" in str(e):
-    #                 pass
-    #             else:
-    #                 raise
-    #         try:
-    #             return inputPlug.asBool()
-    #         except:
-    #             raise
 
         # Remove the node from the destination
         parent = mila_node( parent )
@@ -583,49 +580,59 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
         multiPlug = self.get_multi_plug( parent.obj )
 
         multiPlugIndex = multiPlug.elementByLogicalIndex( index )
-
+        sysPrint("initialise dictionnay")
         data = { kPlugDict:[], kValueDict: [] }
 
-        # Get Data for all elements of the compound array plug
-        for i in range( multiPlugIndex.numChildren() ):
-            plug = multiPlugIndex.child( i )
-            attribute = OpenMaya.MFnAttribute( plug.attribute() ).name()
-
-            if attribute == "shader":
-                # Skip this one, it should not be handled here
-                continue
-
-            compoundPlugArray = OpenMaya.MPlugArray()
-            compoundConnected = plug.connectedTo( compoundPlugArray, True, False )
-
-            # First, check if we have a compound plug
-            # We do not want to get the value of a compound plug, it has no meaning
-            # we will get value/connection of all its child
-            plugArray = OpenMaya.MPlugArray()
-            if plug.isCompound():
-                # Loop on all Child
-                for i in range( plug.numChildren() ):
-                    childPlug = plug.child( i )
-#                     childPlugName = childPlug.partialName( False, False, False, True, False, True)
-                    childAttribute = OpenMaya.MFnAttribute( childPlug.attribute() ).name()
-
-                    if childPlug.connectedTo( plugArray, True, False ):
-                        data[kPlugDict].append( ( childAttribute, plugArray[0].node(), plugArray[0].attribute() ) )
+        
+        with Indent("Get all Attributes"):
+            # Get Data for all elements of the compound array plug
+            for i in range( multiPlugIndex.numChildren() ):
+                plug = multiPlugIndex.child( i )
+                attribute = OpenMaya.MFnAttribute( plug.attribute() ).name()
+                
+                with Indent( "Attribute: %s, %s" % ( attribute, plug.name() ) ):
+                    if attribute == "shader":
+                        # Skip this one, it should not be handled here
+                        continue
+        
+                    outPlugArray = OpenMaya.MPlugArray()
+                    isConnected = plug.connectedTo( outPlugArray, True, False )
+        
+                    # First, check if we have a compound plug
+                    # We do not want to get the value of a compound plug, it has no meaning
+                    # we will get value/connection of all its child
+                    plugArray = OpenMaya.MPlugArray()
+                    if plug.isCompound():
+                        with Indent( "plug is compound, get children data:" ):
+                            # Loop on all Child
+                            for i in range( plug.numChildren() ):
+                                childPlug = plug.child( i )
+                                childAttribute = OpenMaya.MFnAttribute( childPlug.attribute() ).name()
+            
+                                with Indent( "child: %s, %s" % ( childAttribute, childPlug.name() ) ):
+                                    if childPlug.connectedTo( plugArray, True, False ):
+                                        sysPrint("data is connection to: %s" % plugArray[0].name() )
+                                        data[kPlugDict].append( ( childAttribute, plugArray[0].node(), plugArray[0].attribute() ) )
+                                        # now disconnect it
+                                        sysPrint("break the connection")
+                                        self.dgModifier.disconnect( plugArray[0], childPlug )
+                                    else:
+                                        sysPrint("data is Value: %s" % getValue( childPlug ) )
+                                        data[kValueDict].append( ( childAttribute, getValue( childPlug ) ) )
+                                        
+                    if isConnected:
+                        sysPrint("Attribute is connected to: %s" % outPlugArray[0].name())
+                        data[kPlugDict].append( ( attribute, outPlugArray[0].node(), outPlugArray[0].attribute() ) )
                         # now disconnect it
-                        self.dgModifier.disconnect( plugArray[0], childPlug )
+                        sysPrint("break the connection")
+                        self.dgModifier.disconnect( outPlugArray[0], plug )
                     else:
-                        data[kValueDict].append( ( childAttribute, getValue( childPlug ) ) )
-            elif not compoundConnected:
-                # Input is not a compount
-                data[kValueDict].append( ( attribute, getValue( plug ) ) )
-
-            # we still need to check for connection to the compound plug
-            if compoundConnected:
-                data[kPlugDict].append( ( attribute, compoundPlugArray[0].node(), compoundPlugArray[0].attribute() ) )
-                # now disconnect it
-                self.dgModifier.disconnect( compoundPlugArray[0], plug )
+                        sysPrint("attribute has Value: %s" % getValue( plug ))
+                        # Input is not a compount
+                        data[kValueDict].append( ( attribute, getValue( plug ) ) )
 
         node = parent.child( index )
+        sysPrint("disconnect: %s from %s" % (node.outAttr(), parent.inAttr( index )) )
         if node and not keep:
             self.disconnect( node.outAttr(), parent.inAttr( index ) )
 
@@ -710,7 +717,7 @@ class milaMaterial( OpenMayaMPx.MPxCommand ):
 
         self.connect( source.outAttr(), dest.inAttr( index ) )
         if nodeData:
-            self.set_node_data( dest, nodeData )
+            self.set_node_data( dest, nodeData, index )
 
     def move( self, sources, destination, index, keep ):
         # Move all items to the specified index inside the destination
